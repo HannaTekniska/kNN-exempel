@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <title>kNN-visualisering</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    form { margin-bottom: 20px; }
+    label { margin-right: 10px; }
+    #k-value { font-weight: bold; }
+    /* Containern har fast storlek så att grafen alltid syns */
+    #chart-container {
+      width: 600px;
+      height: 400px;
+      margin: auto;
+    }
+    /* Canvas fyller containern */
+    #chart {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+  <form id="form">
+    <label>
+      Avstånd till skolan (km):
+      <input type="number" id="distance" min="0" max="20" step="0.1" value="5">
+    </label>
+    <label>
+      Tid innan skolstart (min):
+      <input type="number" id="time" min="0" max="60" step="1" value="30">
+    </label>
+    <label>
+      k:
+      <input type="range" id="k" min="1" max="6" value="3">
+      <span id="k-value">3</span>
+    </label>
+    <button type="button" id="submit">Klassificera</button>
+  </form>
+
+  <p id="prediction">Modellen gissar: —</p>
+  <div id="chart-container">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <script>
+    // Ursprungligt dataset: x=avstånd, y=-tid
+    const trainingData = [
+      { x:1.2, y:-55, label:'walk' }, { x:0.5, y:-40, label:'walk' },
+      { x:2.0, y:-50, label:'walk' }, { x:3.5, y:-45, label:'walk' },
+      { x:4.0, y:-30, label:'walk' }, { x:5.0, y:-20, label:'walk' },
+      { x:6.0, y:-25, label:'walk' }, { x:7.5, y:-30, label:'walk' },
+      { x:15.0,y:-20, label:'cycle' },{ x:10.0,y:-25, label:'cycle' },
+      { x:12.5,y:-15, label:'cycle' },{ x:8.0, y:-40, label:'cycle' },
+      { x:9.0, y:-35, label:'cycle' },{ x:14.5,y:-30, label:'cycle' },
+      { x:18.0,y:-20, label:'cycle' },{ x:20.0,y:-50, label:'cycle' },
+      { x:16.0,y:-45, label:'cycle' },{ x:13.0,y:-55, label:'cycle' },
+      { x:11.0,y:-60, label:'cycle' },{ x:17.5,y:-15, label:'cycle' },
+      { x:3.0, y:-10, label:'cycle' }, { x:18.5,y: -5, label:'walk' },
+      { x:2.5, y:-20, label:'walk' }, { x:4.5, y:-15, label:'walk' },
+      { x:6.5, y:-10, label:'walk' }, { x:7.0, y: -5, label:'walk' },
+      { x:9.5, y:-10, label:'cycle' },{ x:12.0,y:-40, label:'cycle' },
+      { x:14.0,y:-55, label:'cycle' },{ x:5.5, y:-40, label:'cycle' }
+    ];
+
+    const ctx = document.getElementById('chart').getContext('2d');
+    let chartInstance = null;
+
+    function classifyAndDraw() {
+      // Läs in input och konvertera "7,5" → 7.5
+      const dist    = parseFloat(document.getElementById('distance').value.replace(',', '.'));
+      const timePos = parseFloat(document.getElementById('time').value.replace(',', '.'));
+      const k       = parseInt(document.getElementById('k').value, 10);
+
+      // Vi byter plats på axlarna: x = tid, y = avstånd
+      // Punkt för eleven:
+      const point = { x: -timePos, y: dist };
+
+      // Transformera träningsdata till nya axel-ordningen
+      const transformed = trainingData.map(p => ({
+        x: p.y,      // p.y är negativ tid
+        y: p.x,      // p.x är avstånd
+        label: p.label
+      }));
+
+      // Beräkna avstånden
+      const withDistances = transformed.map(p => ({
+        ...p,
+        dist: Math.hypot(p.x - point.x, p.y - point.y)
+      }));
+
+      // Plocka k närmaste
+      const neighbors = withDistances
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, k);
+
+      // Majoritets­röstning
+      const vote = neighbors.reduce((acc, p) => {
+        acc[p.label] = (acc[p.label] || 0) + 1;
+        return acc;
+      }, {});
+      const prediction = (vote.cycle || 0) > (vote.walk || 0) ? 'cyklar' : 'går';
+      document.getElementById('prediction').textContent =
+        `Modellen gissar att du ${prediction} till skolan.`;
+
+      // Skapa dataset för legend: Går & Cyklar
+      const walkPoints  = transformed.filter(p => p.label === 'walk');
+      const cyclePoints = transformed.filter(p => p.label === 'cycle');
+
+      const walkDataset = {
+        type: 'scatter', label: 'Går', data: walkPoints,
+        backgroundColor: 'rgba(0,0,255,0.7)'
+      };
+      const cycleDataset = {
+        type: 'scatter', label: 'Cyklar', data: cyclePoints,
+        backgroundColor: 'rgba(255,0,0,0.7)'
+      };
+      const newPointDataset = {
+        type: 'scatter', label: 'Elev', data: [point],
+        backgroundColor: 'green', pointRadius: 8
+      };
+      const lineDatasets = neighbors.map((n,i) => ({
+        type: 'line', label: `granne ${i+1}`,
+        data: [{ x: n.x, y: n.y }, point],
+        borderColor: 'gray', borderWidth: 1,
+        pointRadius: 0, fill: false
+      }));
+
+      const allDatasets = [
+        walkDataset,
+        cycleDataset,
+        newPointDataset,
+        ...lineDatasets
+      ];
+
+      // Rita eller uppdatera
+      if (chartInstance) {
+        chartInstance.data.datasets = allDatasets;
+        chartInstance.update();
+      } else {
+        chartInstance = new Chart(ctx, {
+          data: { datasets: allDatasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: {
+                type: 'linear',
+                min: -60,
+                max: 0,
+                title: { display: true, text: 'Tid innan skolstart (min)' }
+              },
+              y: {
+                type: 'linear',
+                min: 0,
+                max: 20,
+                title: { display: true, text: 'Avstånd (km)' }
+              }
+            },
+            plugins: {
+              legend: {
+                position: 'top',
+                labels: {
+                  filter: item => !item.text.startsWith('granne')
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+
+    // Event-lyssnare och initialritning
+    document.getElementById('submit').addEventListener('click', classifyAndDraw);
+    document.getElementById('k').addEventListener('input', e => {
+      document.getElementById('k-value').textContent = e.target.value;
+    });
+    window.addEventListener('load', classifyAndDraw);
+  </script>
+
+</body>
+</html>
